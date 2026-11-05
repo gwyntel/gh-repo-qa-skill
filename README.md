@@ -1,7 +1,6 @@
 # GitHub QA Retrieval — an Agent Skill
 
-Repository understanding and documentation retrieval for coding agents, without
-reading source files one at a time.
+Repository QA and documentation retrieval for coding agents. It combines raw source search for implementation facts with MCP docs for architecture and usage context.
 
 The skill drives two free MCP documentation servers through
 [`mcporter`](https://www.npmjs.com/package/mcporter) (`npx`, no global install):
@@ -15,8 +14,10 @@ You get architecture, API usage, and examples in one call, and fall back to
 manual file reading only when the QA layer is genuinely insufficient.
 
 It also covers **documentation corpora**: how to find a site's `llms.txt` /
-`llms-full.txt` without crawling it, and how to serve one you found as an MCP
-doc server with `mcpdoc`.
+`llms-full.txt` without crawling it, including the path-addressed
+[`afterpartyai/llms_txt_store`](https://github.com/afterpartyai/llms_txt_store)
+dataset, and how to serve a validated corpus with `mcpdoc` (instructions in
+`skills/github-qa-retrieval/SKILL.md` §4.9).
 
 It also ships an optional `gh` shim that turns a very specific silent failure
 into a loud one — see [Why this exists](#why-this-exists).
@@ -45,8 +46,7 @@ through to the real `gh` binary unchanged.
 skills/github-qa-retrieval/
 ├── SKILL.md                          # the skill: metadata + full workflow
 ├── references/
-│   ├── llms-txt-discovery.md         # find a doc corpus: probe, dork, sweep, validate
-│   └── mcpdoc-browsing.md            # serve a found corpus as an MCP doc server
+│   └── llms-txt-discovery.md         # find a doc corpus: probe, dork, sweep, validate
 └── scripts/
     └── gh-shim.sh                    # optional `gh` interceptor for `gh repo qa`
 ```
@@ -82,7 +82,7 @@ cp -R gh-repo-qa-skill/skills/github-qa-retrieval "$HOME/.hermes/skills/"
 For Claude Code, the corresponding target is `~/.claude/skills/`; other agents
 may use a different skills directory. Prerequisites: Node.js with `npx` (for
 `mcporter`) and Git (for the full clone). No API keys — DeepWiki and GitMCP are
-free and keyless for public repositories.
+free and keyless for public repositories. `uvx` is an additional optional prerequisite when serving a corpus with `mcpdoc`.
 
 ## Install the `gh` shim (optional)
 
@@ -159,9 +159,10 @@ for p in llms.txt llms-full.txt .well-known/llms.txt .well-known/llms-full.txt; 
 done
 ```
 
-If the host is unknown, the fallbacks in `references/llms-txt-discovery.md` are a
-`filetype:txt llms-full` dork through a local SearXNG, a GitHub filename sweep
-(`gh api "search/code?q=filename:llms-full.txt"`), and the public registries.
+If the host is unknown, `skills/github-qa-retrieval/references/llms-txt-discovery.md` covers a
+`filetype:txt llms-full` dork through local SearXNG, a GitHub filename sweep,
+public registries, and the path-addressed [`afterpartyai/llms_txt_store`](https://github.com/afterpartyai/llms_txt_store)
+dataset. Treat that dataset as a discovery lead, not publisher-maintained documentation.
 
 **Validate before trusting.** HTTP 200 proves nothing here: SPA routes echo the
 path back as HTML, some servers 301 `llms-full.txt` to `llms.txt`, and at least
@@ -169,14 +170,17 @@ one CDN serves a 401-byte `# Page Not Found` with status 200. Check
 `Content-Type`, the first line of the body, the final URL after redirects, and
 that `llms-full.txt` is not byte-identical to `llms.txt`.
 
-**Serve it** — once you have a real corpus URL, `mcpdoc` exposes it over MCP:
+**Serve it** — once you have a validated corpus URL, `mcpdoc` exposes it over MCP; the
+full setup, source-config options, tool calls, and troubleshooting live in `skills/github-qa-retrieval/SKILL.md` §4.9:
 
 ```bash
-uvx --from mcpdoc mcpdoc --urls "Mine:https://docs.example.com/llms.txt" \
-  --transport sse --port 8082 &
-npx mcporter call --http-url "http://localhost:8082/sse" list_doc_sources --output json
-npx mcporter call --http-url "http://localhost:8082/sse" fetch_docs url="…" --output json
+uvx --from mcpdoc --with 'mcp<2' mcpdoc --urls "Mine:https://docs.example.com/llms.txt" \
+  --transport sse --host 127.0.0.1 --port 8082
 ```
+
+Keep the server running in one terminal while querying it from another, then stop it with
+Ctrl-C. With current mcporter, pass `--allow-http` on calls to the local plain-HTTP endpoint.
+For the path-addressed dataset lookup, see `skills/github-qa-retrieval/references/llms-txt-discovery.md`.
 
 ## Updating
 
@@ -202,8 +206,7 @@ cp -R skills/github-qa-retrieval ~/.claude/skills/
   `repoName`; `repo_name` fails.
 - **`Tool not found`.** Discover the real tool names with
   `npx mcporter list --http-url "https://gitmcp.io/owner/repo"`.
-- **Empty or rate-limited results.** DeepWiki limits aggressively under load;
-  the skill falls back to GitMCP code search and raw fetches.
+- **DeepWiki query fails or is insufficient.** Fall back to GitMCP documentation/code search or targeted source search.
 - **Private repository returns nothing.** DeepWiki/GitMCP index public
   repositories; use the GitHub MCP server with a PAT instead.
 - **Skill not discovered by the agent.** Check the frontmatter opens with `---`
@@ -219,6 +222,5 @@ adapts it to other layouts.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The skill is authored by Hermes Agent and
-maintained here by GwynTel. The original MIT license and upstream copyright
-attribution are preserved.
+MIT — see [LICENSE](LICENSE). This revision is maintained by GwynTel; the
+original Hermes Agent attribution and MIT copyright notice are preserved.

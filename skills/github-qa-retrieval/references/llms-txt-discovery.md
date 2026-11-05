@@ -2,7 +2,7 @@
 
 Find machine-readable documentation corpora for a domain, org, or topic. This file is
 discovery only — once you have a corpus and want to *browse* it as an MCP doc server, see
-`references/mcpdoc-browsing.md`. Generic search-operator syntax (how `site:`, `filetype:`,
+§4.9 in the root `SKILL.md`. Generic search-operator syntax (how `site:`, `filetype:`,
 `inurl:` behave per engine) lives in the `searxng-search` skill; this file only records how
 to aim those operators at llms.txt.
 
@@ -21,8 +21,8 @@ Both are conventions, not a protocol. Most sites do not publish them, and a URL 
 
 ## Order of attack
 
-Probe → dork → GitHub filename sweep → registries. Never start with a web search for a
-*known* domain: the path is fixed, so request it. Search is for when you do not know the host.
+Probe → dork → GitHub filename sweep → registries / path-addressed datasets. Never start with a web search for a
+*known* domain: probe its fixed paths first. Search and external datasets are for when the host or corpus is unknown.
 
 ## 1. Probe the fixed paths (default first move)
 
@@ -54,7 +54,7 @@ host and needs no key.
 
 ## 2. Dork, when the host is unknown
 
-SearXNG is the only local engine that will honour `filetype:`, and only through `startpage`:
+Search-operator support depends on the upstream engine and its current health. In one tested SearXNG configuration, `filetype:` worked through `startpage`; treat this as an observed configuration, not a guarantee. The example assumes a local SearXNG JSON endpoint; replace it with your own endpoint if needed:
 
 ```bash
 curl -s "http://localhost:8080/search?q=filetype%3Atxt+llms-full&format=json&engines=startpage" \
@@ -78,9 +78,7 @@ Check engine health before blaming the query. **Always read `unresponsive_engine
 curl -s "http://localhost:8080/search?q=...&format=json" | jq '.unresponsive_engines'
 ```
 
-A dork that returns 0 usually means the engine died, not that the web is empty. Observed the
-same day as the 20/20 run: `startpage: parsing error`, `google cse: too many requests`,
-`brave: Suspended`, `duckduckgo: CAPTCHA`. Re-run later instead of rewriting the query.
+A zero-result response is ambiguous: the query may be unsupported, the engine may be unavailable, or there may be no indexed results. Inspect `unresponsive_engines` before concluding the web is empty; retry later if the engine reports an error.
 
 ## 3. GitHub filename sweep (best signal-to-noise for bulk)
 
@@ -93,16 +91,39 @@ gh api "search/code?q=filename:llms.txt&per_page=1" --jq .total_count
 - `filename:llms.txt` → **192,000**, which is GitHub's result ceiling, not a real count. Treat any
   value at exactly 192,000 as "at least this many".
 
-Narrow with `in:path`, `language:Markdown`, `org:`, `repo:`, `extension:`. Requires an
-authenticated `gh` (here: account `gwyntel-git`, token in `~/.hermes/.env`); a placeholder token
-returns `401 Bad credentials`. Plain DuckDuckGo HTML and Bing scraping return nothing against
-GitHub — use the API.
+Narrow with `in:path`, `language:Markdown`, `org:`, `repo:`, and `extension:`. The API requires an authenticated `gh` CLI. Plain search-engine HTML scraping may not expose GitHub code-search results; use the API when available.
 
-## 4. Registries (curated, small)
+## 4. Registries and datasets
 
 - `https://llmstxt.org/` — the spec plus a partial source list
 - `https://directory.llmstxt.cloud/`
 - `https://llmstxt.site/`
+- [`afterpartyai/llms_txt_store`](https://github.com/afterpartyai/llms_txt_store) — a path-addressed dataset of generated site summaries; use the deterministic lookup below when you know the hostname.
+
+### Path lookup in `afterpartyai/llms_txt_store`
+
+The repository README documents this layout:
+
+```text
+/<public-suffix>/<subdomain-labels>/<one directory per character of the registrable domain label>/llms.txt
+```
+
+Derive the public suffix and registrable domain with a Public Suffix List-aware parser; do not assume every suffix is one label (`co.uk` is one suffix). Preserve any subdomain labels between the registrable domain and suffix. Examples from the repository README:
+
+- `abc.com` → `com/a/b/c/llms.txt`
+- `docs.abc.com` → `com/docs/a/b/c/llms.txt`
+- `docs.abc.co.uk` → `co.uk/docs/a/b/c/llms.txt`
+- `fastapi.tiangolo.com` → `com/fastapi/t/i/a/n/g/o/l/o/llms.txt`
+
+Fetch a known path through GitHub's Contents API or its raw URL:
+
+```bash
+gh api 'repos/afterpartyai/llms_txt_store/contents/com/fastapi/t/i/a/n/g/o/l/o/llms.txt?ref=master' \
+  --jq .download_url
+curl -fsSL 'https://raw.githubusercontent.com/afterpartyai/llms_txt_store/master/com/fastapi/t/i/a/n/g/o/l/o/llms.txt'
+```
+
+There is no global index; calculate the path for a known host rather than scanning the repository. The README describes the files as machine-readable summaries generated from Common Crawl/SN33 processing. Treat them as discovery leads—not publisher-maintained canonical docs—and follow their links back to the site, then verify important claims against the current first-party source. The example path above was confirmed to exist via the GitHub Contents API; that does not establish coverage or freshness for other domains.
 
 ## Validation gate — HTTP 200 is not proof
 
