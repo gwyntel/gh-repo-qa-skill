@@ -62,9 +62,9 @@ Direct path to the skill inside the repository:
 npx skills add https://github.com/gwyntel/gh-repo-qa-skill/tree/main/skills/github-qa-retrieval
 ```
 
-The Vercel CLI installs the skill file. If you also want the optional shim,
-clone the repository and copy the complete directory into your agent's skills
-folder. For example, in Hermes:
+The Vercel CLI installs the skill and its support files into your selected
+agent's skills folder. If you prefer a manual install, clone the repository and
+copy the complete directory. For example, in Hermes:
 
 ```bash
 git clone https://github.com/gwyntel/gh-repo-qa-skill.git
@@ -79,11 +79,14 @@ free and keyless for public repositories.
 
 ## Install the `gh` shim (optional)
 
-The shim is a small bash script. Link it somewhere earlier on `PATH` than the
+The shim is a small bash script. Set `SKILL_DIR` to the directory containing
+the installed skill, then link the shim somewhere earlier on `PATH` than the
 real `gh`:
 
 ```bash
-ln -sfn "$PWD/skills/github-qa-retrieval/scripts/gh-shim.sh" "$HOME/.local/bin/gh"
+SKILL_DIR=/path/to/github-qa-retrieval
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$SKILL_DIR/scripts/gh-shim.sh" "$HOME/.local/bin/gh"
 ```
 
 `~/.local/bin` is a good target because it precedes `/usr/bin` on most distros
@@ -100,8 +103,9 @@ with timestamp, working directory, and arguments — useful for finding out whic
 agents keep making the mistake.
 
 The shim resolves `SKILL.md` relative to its own symlink-resolved location, so it
-works from any install layout, not just a fixed prefix. Set `GH_SHIM_REAL_GH`
-if your real binary is not at `/usr/bin/gh`.
+works from any install layout, not just a fixed prefix. The default real binary
+is `/usr/bin/gh`; on macOS or another layout, set `GH_SHIM_REAL_GH` to the real
+binary path before invoking the shim.
 
 To remove it, delete the symlink: `rm "$HOME/.local/bin/gh"`.
 
@@ -173,5 +177,6 @@ adapts it to other layouts.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Originally written inside a Hermes agent
-installation and maintained here by GwynTel.
+MIT — see [LICENSE](LICENSE). The skill is authored by Hermes Agent and
+maintained here by GwynTel. The original MIT license and upstream copyright
+attribution are preserved.

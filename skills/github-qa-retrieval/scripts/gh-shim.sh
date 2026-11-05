@@ -12,41 +12,40 @@
 #   turns the silent false-success into a hard failure + the full skill text,
 #   so the model gets corrected mid-run and still completes the user's task.
 #
-# INSTALL (idempotent; ~/.local/bin is on PATH for both interactive shells and
-# the systemd gateway unit, unlike ~/bin):
-#     ln -sf "$HERMES_HOME/skills/github-qa-retrieval/scripts/gh-shim.sh" \
-#            "$HOME/.local/bin/gh"
+# INSTALL (idempotent; set SKILL_DIR to this installed skill directory):
+#     mkdir -p "$HOME/.local/bin"
+#     ln -sfn "$SKILL_DIR/scripts/gh-shim.sh" "$HOME/.local/bin/gh"
 #
-# Intercepts: gh repo qa <anything...>   (also `gh repo qar`, `gh repo qab`, ...)
-# Logs each interception to $HERMES_HOME/logs/gh-qa-shim.log
+# Intercepts: gh repo qa <anything...>; unrelated repo commands pass through
+# Logs each interception to ${HERMES_HOME:-$HOME/.hermes}/logs/gh-qa-shim.log
 
 set -u
 
 REAL_GH="${GH_SHIM_REAL_GH:-/usr/bin/gh}"
 
 # Locate SKILL.md from this script's own resolved path, so the shim works from
-# any install layout (a Hermes skills dir, .claude/skills, a bare checkout) and
-# not only from $HERMES_HOME. Symlink-safe, and BSD/macOS readlink compatible.
+# any install layout and not only from $HERMES_HOME. Symlink-safe; needs Bash.
 _self="${BASH_SOURCE[0]}"
+case "$_self" in /*) ;; *) _self="$PWD/$_self" ;; esac
 while [ -L "$_self" ]; do
     _link="$(readlink "$_self")"
     case "$_link" in
         /*) _self="$_link" ;;
-        *)  _self="$(dirname "$_self")/$_link" ;;
+        *)  _self="${_self%/*}/$_link" ;;
     esac
 done
-SKILL="$(cd -- "$(dirname -- "$_self")/.." && pwd)/SKILL.md"
+SKILL="$(cd "${_self%/*}/.." && pwd)/SKILL.md"
 [ -r "$SKILL" ] || SKILL="${HERMES_HOME:-$HOME/.hermes}/skills/github-qa-retrieval/SKILL.md"
 
 LOG_DIR="${HERMES_HOME:-$HOME/.hermes}/logs"
 LOG="$LOG_DIR/gh-qa-shim.log"
 
-if [ "$#" -ge 2 ] && [ "$1" = "repo" ] && [ "${2#qa}" != "$2" ]; then
+if [ "$#" -ge 2 ] && [ "$1" = "repo" ] && [ "$2" = "qa" ]; then
     mkdir -p "$LOG_DIR" 2>/dev/null
     printf '%s  cwd=%s  args=%s\n' \
-        "$(date -Is)" "$PWD" "$(printf '%q ' "$@")" >>"$LOG" 2>/dev/null
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$PWD" "$(printf '%q ' "$@")" >>"$LOG" 2>/dev/null
 
-    sed "s|__SKILL__|$SKILL|g" >&2 <<'BANNER'
+    cat >&2 <<'BANNER'
 ================================================================================
   ✗  `gh repo qa` DOES NOT EXIST. You just invented a command.
 ================================================================================
@@ -61,7 +60,7 @@ through `mcporter` (via npx). The full skill text follows — read it, then do
 the task the user actually asked for using the commands it specifies.
 
   Skill:    github-qa-retrieval
-  Path:     __SKILL__
+  Path:     resolved relative to this shim
   Load it:  skill_view(name='github-qa-retrieval')
   Rapid form:
       npx mcporter call --http-url "https://mcp.deepwiki.com/mcp" \

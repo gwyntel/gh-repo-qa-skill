@@ -1,7 +1,7 @@
 ---
 name: github-qa-retrieval
 description: Use when you need to understand, document, or QA a GitHub repository. First-line retrieval via DeepWiki and GitMCP MCP servers over mcporter (npx) BEFORE manual code reading, with automatic fallback. Note that `gh repo qa` does not exist.
-version: 1.3.0
+version: 1.3.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -36,25 +36,26 @@ Workflow section below.
 
 A PATH shim intercepts the mistake and forces a read of this file:
 
-- **Shim:** `~/.hermes/skills/github-qa-retrieval/scripts/gh-shim.sh`
-- **Installed at:** `~/.local/bin/gh` (symlink; `~/.local/bin` precedes
-  `/usr/bin` on PATH **and is present in the systemd gateway unit env**, which
-  is what subagent/non-interactive shells inherit — `~/bin` is NOT)
-- **Intercepts:** `gh repo qa …` / `gh repo qar …` → prints a hard-failure
-  banner + the entire SKILL.md to stderr, `exit 1`
-- **Everything else** execs through to `/usr/bin/gh` byte-for-byte
-- **Log:** `~/.hermes/logs/gh-qa-shim.log` (timestamp, cwd, args) — check it to
-  see which models keep making the mistake
+- **Shim:** `scripts/gh-shim.sh`, alongside this file in the installed skill directory
+- **Install:** put a symlink to it earlier on PATH than the real `gh` (see the portable instructions below)
+- **Intercepts:** `gh repo qa …` → prints a hard-failure banner + the entire SKILL.md to stderr, `exit 1`
+- **Everything else** execs through to the real `gh` binary unchanged (default `/usr/bin/gh`; override with `GH_SHIM_REAL_GH`)
+- **Log:** `${HERMES_HOME:-$HOME/.hermes}/logs/gh-qa-shim.log` (timestamp, cwd, args); set `HERMES_HOME` to choose another base directory
 
-Reinstall (idempotent) on any host that has `gh`:
+Install the optional shim after the skill is installed. Set `SKILL_DIR` to the
+actual directory containing this `SKILL.md`, then link it somewhere earlier on
+PATH than the real `gh`:
 
 ```bash
-ln -sfn "$HERMES_HOME/skills/github-qa-retrieval/scripts/gh-shim.sh" "$HOME/.local/bin/gh"
+SKILL_DIR=/path/to/github-qa-retrieval
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$SKILL_DIR/scripts/gh-shim.sh" "$HOME/.local/bin/gh"
 ```
 
-The shim lives inside the skill directory on purpose: whatever syncs this
-directory carries the shim and this doc together, and the shim finds `SKILL.md`
-relative to its own resolved path rather than assuming a fixed install prefix.
+The shim resolves `SKILL.md` relative to its own symlink-resolved location, so
+it works across skill directories and platforms with Bash. Its log defaults to
+`${HERMES_HOME:-$HOME/.hermes}/logs/gh-qa-shim.log`; set `HERMES_HOME` to use a
+different base. Set `GH_SHIM_REAL_GH` if the real binary is not `/usr/bin/gh`.
 
 **If you are reading this because a `gh repo qa` command just failed:** good —
 that was the shim working. Do not retry the command. Use the Workflow section
