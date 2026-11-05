@@ -14,6 +14,10 @@ The skill drives two free MCP documentation servers through
 You get architecture, API usage, and examples in one call, and fall back to
 manual file reading only when the QA layer is genuinely insufficient.
 
+It also covers **documentation corpora**: how to find a site's `llms.txt` /
+`llms-full.txt` without crawling it, and how to serve one you found as an MCP
+doc server with `mcpdoc`.
+
 It also ships an optional `gh` shim that turns a very specific silent failure
 into a loud one — see [Why this exists](#why-this-exists).
 
@@ -39,9 +43,12 @@ through to the real `gh` binary unchanged.
 
 ```
 skills/github-qa-retrieval/
-├── SKILL.md              # the skill: metadata + full workflow
+├── SKILL.md                          # the skill: metadata + full workflow
+├── references/
+│   ├── llms-txt-discovery.md         # find a doc corpus: probe, dork, sweep, validate
+│   └── mcpdoc-browsing.md            # serve a found corpus as an MCP doc server
 └── scripts/
-    └── gh-shim.sh        # optional `gh` interceptor for `gh repo qa`
+    └── gh-shim.sh                    # optional `gh` interceptor for `gh repo qa`
 ```
 
 `SKILL.md` frontmatter `name` matches its directory name, as the
@@ -135,6 +142,41 @@ the exact names.
 Good fits: architecture questions, library usage, finding examples, pre-reading
 context. Bad fits: line-precise bug hunting, uncommitted changes, private repos
 without a PAT.
+
+## Documentation corpora (`llms.txt`)
+
+Many doc sites publish their whole documentation as one Markdown file. Fetching
+that beats crawling: `llms.txt` is a curated index, `llms-full.txt` inlines every
+page. The skill treats these as a first-class retrieval path.
+
+**Find one** — probe the fixed paths before searching, because the path is
+already known:
+
+```bash
+for p in llms.txt llms-full.txt .well-known/llms.txt .well-known/llms-full.txt; do
+  printf '%s/%s  ' "$SITE" "$p"
+  curl -sL -A 'Mozilla/5.0' -o /dev/null -w '%{http_code} %{size_download} %{url_effective}\n' "$SITE/$p"
+done
+```
+
+If the host is unknown, the fallbacks in `references/llms-txt-discovery.md` are a
+`filetype:txt llms-full` dork through a local SearXNG, a GitHub filename sweep
+(`gh api "search/code?q=filename:llms-full.txt"`), and the public registries.
+
+**Validate before trusting.** HTTP 200 proves nothing here: SPA routes echo the
+path back as HTML, some servers 301 `llms-full.txt` to `llms.txt`, and at least
+one CDN serves a 401-byte `# Page Not Found` with status 200. Check
+`Content-Type`, the first line of the body, the final URL after redirects, and
+that `llms-full.txt` is not byte-identical to `llms.txt`.
+
+**Serve it** — once you have a real corpus URL, `mcpdoc` exposes it over MCP:
+
+```bash
+uvx --from mcpdoc mcpdoc --urls "Mine:https://docs.example.com/llms.txt" \
+  --transport sse --port 8082 &
+npx mcporter call --http-url "http://localhost:8082/sse" list_doc_sources --output json
+npx mcporter call --http-url "http://localhost:8082/sse" fetch_docs url="…" --output json
+```
 
 ## Updating
 

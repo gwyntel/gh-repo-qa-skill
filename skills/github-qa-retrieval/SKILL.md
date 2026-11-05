@@ -1,13 +1,13 @@
 ---
 name: github-qa-retrieval
-description: Use when you need to understand, document, or QA a GitHub repository. First-line retrieval via DeepWiki and GitMCP MCP servers over mcporter (npx) BEFORE manual code reading, with automatic fallback. Note that `gh repo qa` does not exist.
-version: 1.3.1
+description: Use when QA-ing a GitHub repo or an llms.txt doc corpus.
+version: 1.4.0
 author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [MCP, Documentation, GitHub, QA, Retrieval, Code-Understanding]
-    related_skills: [mcporter, native-mcp]
+    tags: [MCP, Documentation, GitHub, QA, Retrieval, Code-Understanding, llms-txt, Discovery]
+    related_skills: [mcporter, native-mcp, searxng-search]
 prerequisites:
   commands: [npx]
   note: mcporter is invoked via npx, no global install required
@@ -62,6 +62,21 @@ that was the shim working. Do not retry the command. Use the Workflow section
 below.
 
 **First-line documentation retrieval for codebases.** Use this skill BEFORE manually reading code files via MCP.
+
+## Documentation corpora: llms.txt / llms-full.txt
+
+A growing share of doc sites publish themselves as a single Markdown file. That is cheaper and
+cleaner than crawling, so check for it before scraping anything.
+
+| Need | Go to |
+|---|---|
+| Find a corpus for a domain / org / topic | `references/llms-txt-discovery.md` |
+| Serve a corpus you already found as an MCP doc server | `references/mcpdoc-browsing.md` |
+| Search-operator syntax (`site:`, `filetype:`, `inurl:`) per engine | skill `searxng-search` |
+
+Discovery order is probe → dork → GitHub filename sweep → registries: the path is fixed, so
+request `/llms.txt` and `/llms-full.txt` directly instead of searching for them. **HTTP 200 is not
+proof** — HTML shells, redirect-to-index, and 401-byte page-not-found shims all answer 200.
 
 ## Philosophy
 
