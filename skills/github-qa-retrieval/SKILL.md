@@ -1,7 +1,7 @@
 ---
 name: github-qa-retrieval
 description: Use when QA-ing GitHub repos or llms.txt corpora.
-version: 2.0.0
+version: 2.1.0
 author: gwyntel
 license: MIT
 metadata:
@@ -28,7 +28,7 @@ prerequisites:
 | R2 | **Raw code searching runs in a blocking subagent** (`delegate_task`), not inline. | 3+ raw searches dump 10k–80k chars into your context and you lose the thread. |
 | R3 | **Never answer a code question from memory when a search is cheap.** | Invented file paths and APIs are the #1 QA failure mode. |
 | R4 | **Every factual claim about code carries `path:line`.** | Unattributed claims are treated as guesses and must be re-verified. |
-| R5 | **Documentation retrieval (MCP) is for *shape*; raw search is for *truth*.** | DeepWiki summarizes; only the source knows what it actually does. |
+| R5 | **Fixed order: documentation search → indexed code search → raw local search.** Raw `rg`/`grep` is the last resort, never the opening move. | Docs are pre-indexed and cheap; local search is expensive and floods context. Truth still needs `path:line` — tier 2 supplies paths, tier 3 supplies exact lines. |
 | R6 | **If you make 3+ retrieval calls for one question, or the raw output exceeds ~5000 chars, delegate.** | See §2. |
 
 ---
@@ -53,38 +53,57 @@ A PATH shim intercepts the mistake and forces a read of this file:
 
 ---
 
-## 2. Architecture: two retrieval layers, one blocking subagent
+## 2. Architecture: three tiers, documentation first
+
+**The order is fixed. Do not reorder it per question.**
+
+| Tier | Layer | Tools | Cost |
+|------|-------|-------|------|
+| **1** | **Documentation search** | `llms.txt` corpus / mcpdoc · DeepWiki `ask_question` · GitMCP `{prefix}_documentation` + `search_{prefix}_documentation` · Mintlify | pre-indexed, no clone, answers "shape" |
+| **2** | **Code search (indexed)** | GitMCP `search_{prefix}_code` · `gh search code` · GitHub REST `search/code` | pre-indexed, no clone, returns exact paths + snippets |
+| **3** | **Raw code search (last resort)** | `rg` · `git grep` · `ast-grep` · `semgrep` · `ctags` · `git log -S` · targeted `read_file` | local, expensive, runs in a blocking subagent |
+
+Escalate **only** when the tier above cannot settle the question. "I could have searched
+locally" is not a reason to skip tiers 1 and 2.
 
 ```
 User asks about code / a repo
         │
         ▼
 ┌──────────────────────────────────────────────┐
-│ LAYER 0  Classify the question               │
-│   shape/overview  vs  truth/exact-symbols     │
+│ TIER 1  DOCUMENTATION SEARCH                  │
+│   llms.txt/mcpdoc → DeepWiki → GitMCP docs    │
+│   answers architecture, usage, intent         │
 └──────────────────────────────────────────────┘
-        │
+        │ insufficient, or needs exact paths?
         ▼
 ┌──────────────────────────────────────────────┐
-│ LAYER 1  RAW CODE SEARCH   (blocking subagent)│
-│   rg → git grep → ast-grep → gh search code   │
-│   → pickaxe → semgrep → ctags                 │
-│   returns ONLY an evidence digest (§2.2)      │
+│ TIER 2  INDEXED CODE SEARCH (no clone)        │
+│   GitMCP search_{prefix}_code → gh search code│
+│   returns file paths + snippets               │
 └──────────────────────────────────────────────┘
-        │ insufficient?
+        │ insufficient, or needs exact lines?
         ▼
 ┌──────────────────────────────────────────────┐
-│ LAYER 2  DOC RETRIEVAL (mcporter, npx)        │
-│   DeepWiki → GitMCP → Mintlify → GitHub MCP   │
-│   returns synthesized prose + file pointers   │
+│ TIER 3  RAW CODE SEARCH  (blocking subagent)  │
+│   rg → git grep → ast-grep → semgrep → ctags  │
+│   → pickaxe; returns ONLY an evidence digest  │
 └──────────────────────────────────────────────┘
         │ still insufficient?
         ▼
 ┌──────────────────────────────────────────────┐
-│ LAYER 3  TARGETED read_file of the 1–3 exact │
-│   files the digests named. Never bulk reads.  │
+│ TARGETED read_file of the 1–3 exact files the │
+│ earlier tiers named. Never bulk reads.        │
 └──────────────────────────────────────────────┘
 ```
+
+**Why docs first:** a doc corpus or DeepWiki answer costs one HTTP call and frequently
+settles the question outright. Indexed code search then supplies real `path:line` evidence
+without cloning. Only when both are thin — or the question is irreducibly about exact lines
+(a specific bug, a precise diff, an unindexed branch) — do you pay for local search.
+
+**Why this does not weaken evidence:** R4 still holds. Tier 1 prose is a hypothesis; tier 2
+paths and tier 3 lines are the evidence. Every factual claim still ships `path:line`.
 
 ### 2.1 The blocking-subagent contract
 
@@ -147,12 +166,12 @@ For a local checkout, tell the subagent to run the commands itself in `terminal`
 
 ---
 
-## 3. The raw code search toolbelt
+## 3. Tier 3 — the raw code search toolbelt (last resort)
 
-Reach for these **before** any documentation layer when the question is about *what the code does*.
+**Last resort.** Reach for these only after tiers 1 and 2 have failed to settle the question, or when it is irreducibly about exact lines (a specific bug, a precise diff, an unindexed or private branch).
 Every entry: **use it when**, **command**, **gotcha**.
 
-### 3.1 `rg` (ripgrep) — default first move
+### 3.1 `rg` (ripgrep) — first move *within tier 3*
 
 Use when: you have any literal, identifier, string, or error message. Respects `.gitignore`, fast on monorepos.
 
@@ -302,7 +321,7 @@ no network?      → local tools only; say so explicitly in the answer's confide
 
 ---
 
-## 4. Layer 2 — MCP documentation retrieval (via `mcporter`, `npx`)
+## 4. Tier 1 — documentation retrieval (via `mcporter`, `npx`)
 
 Use this layer for **shape and intent**: architecture, "how do I use X", migration notes, design rationale. It is AI-synthesized prose — never let it be the *only* source for a factual code claim (R5).
 
@@ -485,19 +504,21 @@ npx mcporter config add github \
 ```
 Need to understand code?
 │
-├─ Is the question about EXACT code (a symbol, a line, a bug, a diff)?
-│   └─ YES → BLOCKING SUBAGENT (§2) with the raw toolbelt (§3)
-│            └─ digest back → cite path:line → answer
+├─ TIER 1 — documentation search (always start here)
+│   llms.txt corpus / mcpdoc → DeepWiki ask_question → GitMCP {prefix}_documentation
+│   └─ answers "how does X work" / "what is this project"?
+│        └─ verify the 1–3 load-bearing claims at tier 2 → answer with path:line
 │
-├─ Is the question about SHAPE (architecture, how to use, what changed)?
-│   └─ YES → DeepWiki ask_question  (or GitMCP {prefix}_documentation)
-│            └─ then verify the 1–3 load-bearing claims with one `rg` each
+├─ TIER 2 — indexed code search (no clone)
+│   GitMCP search_{prefix}_code → gh search code
+│   └─ returns exact paths + snippets? → cite path:line → answer
 │
-├─ Is the repo private / uncloned?
-│   └─ YES → gh search code (§3.8) → GitHub MCP (PAT) → shallow clone to /tmp
+├─ TIER 3 — raw local code search (LAST RESORT, blocking subagent §2)
+│   rg → git grep → ast-grep → semgrep → ctags → git log -S
+│   └─ digest back → cite path:line → answer
 │
-└─ Both layers thin?
-    └─ TARGETED read_file of exactly the files the evidence digest named
+└─ Still unresolved?
+    └─ TARGETED read_file of exactly the files earlier tiers named
        (max 3 files, max ~400 lines each) — never a bulk read
 ```
 
@@ -547,8 +568,9 @@ DeepWiki is useful for AI-synthesized answers; GitMCP is effective for targeted 
 3. **`grep -rn .` over the repo root.** It walks `node_modules`, `.git`, and build output. Always scope.
 4. **Citing a file you never opened.** A path from a doc summary is a lead, not evidence.
 5. **Calling `gh repo qa`.** See §1. There is a shim, and it will stop you.
-6. **Reading whole files to answer one line's question.** `rg -n -C 5` is the tool.
-7. **Presenting synthesized prose as a quote from the code.** Prose from DeepWiki is a hypothesis; `path:line` is the fact.
+6. **Opening with local `rg`/`grep` on a repo question.** That is tier 3. Start with a doc corpus or DeepWiki, then indexed code search, and only then search locally.
+7. **Reading whole files to answer one line's question.** `rg -n -C 5` is the tool.
+8. **Presenting synthesized prose as a quote from the code.** Prose from DeepWiki is a hypothesis; `path:line` is the fact.
 
 ---
 
@@ -607,4 +629,4 @@ The shim resolves `SKILL.md` relative to its own symlink-resolved location, so i
 
 ---
 
-**Remember:** raw code search is the truth layer and it runs in a blocking subagent. Documentation retrieval is the shape layer. Cite `path:line` or don't answer.
+**Remember:** documentation search first, indexed code search second, raw local search last. Cite `path:line` or don't answer.
