@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gwyntel/gh-repo-qa-skill)
+
 # GitHub QA Retrieval — an Agent Skill
 
 Repository QA and documentation retrieval for coding agents. It combines raw source search for implementation facts with MCP docs for architecture and usage context.
