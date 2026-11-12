@@ -1,7 +1,7 @@
 ---
 name: github-qa-retrieval
 description: Use when QA-ing GitHub repos or llms.txt corpora.
-version: 2.1.1
+version: 2.1.2
 author: gwyntel
 license: MIT
 metadata:
@@ -29,7 +29,7 @@ prerequisites:
 | R3 | **Never answer a code question from memory when a search is cheap.** | Invented file paths and APIs are the #1 QA failure mode. |
 | R4 | **Every factual claim about code carries `path:line`.** | Unattributed claims are treated as guesses and must be re-verified. |
 | R5 | **Fixed order: documentation search → indexed code search → raw local search.** Raw `rg`/`grep` is the last resort, never the opening move. | Docs are pre-indexed and cheap; local search is expensive and floods context. Truth still needs `path:line` — tier 2 supplies paths, tier 3 supplies exact lines. |
-| R6 | **If you make 3+ retrieval calls for one question, or the raw output exceeds ~5000 chars, delegate.** | See §2. |
+| R6 | **Delegate when a question needs 3+ retrieval calls or more than ~5000 chars of raw output — and always delegate raw/local shell searches, however small.** | The threshold governs non-raw work; raw shell search is never inline (§2.1). |
 
 ---
 
@@ -63,7 +63,7 @@ A PATH shim intercepts the mistake and forces a read of this file:
 | **2** | **Code search (indexed)** | GitMCP `search_{prefix}_code` · `gh search code` · GitHub REST `search/code` | pre-indexed, no clone, returns exact paths + snippets |
 | **3** | **Raw code search (last resort)** | `rg` · `git grep` · `ast-grep` · `semgrep` · `ctags` · `git log -S` | local, expensive, runs in a blocking subagent |
 
-Hermes-native `search_files` and `read_file` are **secondary convenience tools**, not a replacement tier: use them for a narrow filename/content lookup or to inspect a small, already-identified file when that is more direct. They do not change the documentation → indexed search → raw search order. Do not use them for broad repo scans or to avoid the subagent rule. Raw/local code searches (shell tools), multi-file investigations, and searches meeting §2.1 thresholds remain blocking-subagent work; `read_file` is for targeted inspection, not bulk reading.
+Hermes-native `search_files` and `read_file` are **secondary convenience tools**, not a replacement tier: use them for a narrow filename/content lookup or to inspect a small, already-identified file when that is more direct. They do not change the documentation → indexed search → raw search order. Do not use them for broad repo scans, and never as a way around the subagent rule: raw/local shell searches always delegate (§2.1), and `read_file` is for targeted inspection, not bulk reading.
 
 Escalate **only** when the tier above cannot settle the question. "I could have searched
 locally" is not a reason to skip tiers 1 and 2.
@@ -94,7 +94,7 @@ User asks about code / a repo
         │ still insufficient?
         ▼
 ┌──────────────────────────────────────────────┐
-│ TARGETED Hermes read_file of the 1-3 exact   │
+│ TARGETED Hermes read_file of the 1–3 exact   │
 │ files earlier tiers named; never bulk reads. │
 │ Hermes search_files: narrow convenience only.│
 │ Broad/raw search stays in the subagent.      │
@@ -121,7 +121,7 @@ Dispatch the subagent whenever **any** of these hold (R6):
 - you are comparing more than one repository;
 - you need to read a file that is likely longer than ~400 lines.
 
-Raw/local repository searches (`rg`, `git grep`, `ast-grep`, and similar shell searches) always run in the blocking subagent, even when the query seems small. A narrow Hermes `search_files` lookup is the inline convenience exception; if it expands into raw search or multi-file investigation, delegate.
+Those triggers only add to the next rule. **Raw/local shell searches (`rg`, `git grep`, `ast-grep`, and friends) always run in the subagent, however small the query looks** — the 3-call threshold is never a licence to inline one `rg`. A narrow Hermes `search_files` lookup is the only inline exception, and it stops being narrow the moment it becomes raw search or a multi-file investigation.
 
 ### 2.2 Evidence digest schema (what the subagent returns)
 
@@ -523,7 +523,7 @@ Need to understand code?
 │
 └─ Still unresolved?
     ├─ TARGETED Hermes read_file of the exact files earlier tiers named
-    │  (max 3 files, ~400 lines each) — no bulk reads
+    │  (max 3 files, max ~400 lines each) — no bulk reads
     └─ Hermes search_files only for a narrow filename/content lookup;
        broad or raw repository searches stay in the blocking subagent
 ```
@@ -560,7 +560,7 @@ Need to understand code?
 - **Secondary native lookup:** Hermes `search_files` may help with a narrow filename/content lookup. Keep it bounded and subordinate to tiers 1–2; do not use it for broad repository scans. If it expands into raw/local search or multi-file investigation, use a blocking subagent as §2.1 requires.
 - **Web fallback:** `web_extract` on raw GitHub URLs, or `browser_navigate` on GitHub browse pages.
 
-Rule of thumb (R6): **3+ retrieval calls for one question, or >5000 chars of raw output → delegate to a blocking subagent.** Under that, do it inline and keep moving.
+Rule of thumb (R6): **3+ retrieval calls for one question, or >5000 chars of raw output → delegate to a blocking subagent.** Under that, do it inline and keep moving — except raw/local shell searches, which always delegate (§2.1).
 
 ### Key insight from practice
 
@@ -570,7 +570,7 @@ DeepWiki is useful for AI-synthesized answers; GitMCP is effective for targeted 
 
 ## 9. Anti-patterns (stop doing these)
 
-1. **Answering "where is X defined?" from training data.** Follow the ordered tiers; a narrow Hermes `search_files` lookup may help, but raw/local search is a blocking-subagent step.
+1. **Answering "where is X defined?" from training data.** Follow the ordered tiers; once tiers 1–2 come up short, a narrow `search_files` *filename* lookup may help. Any content search is a blocking-subagent step, not an opening move.
 2. **Dumping `rg` output into your own context and reasoning over 400 hits.** Re-dispatch with `--glob` and `-m`.
 3. **`grep -rn .` over the repo root.** It walks `node_modules`, `.git`, and build output. Always scope.
 4. **Citing a file you never opened.** A path from a doc summary is a lead, not evidence.
