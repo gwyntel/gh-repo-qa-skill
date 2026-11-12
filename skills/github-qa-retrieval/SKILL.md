@@ -412,7 +412,7 @@ No API key required for public Mintlify documentation sites — just use `https:
 
 ### 4.9 llms.txt corpora and mcpdoc browsing
 
-For a known site, probe its fixed `llms.txt` paths. For an unknown host, use `references/llms-txt-discovery.md`, including its path-based lookup for `afterpartyai/llms_txt_store`. Those generated summaries are discovery leads, not publisher-maintained documentation; verify important claims against current first-party sources. Validate any candidate before trusting it; generic search-operator behavior stays in `searxng-search`.
+For a known site, probe its fixed `llms.txt` paths. For an unknown host, use `references/llms-txt-discovery-v2.md`, including its path-based lookup for `afterpartyai/llms_txt_store`. Those generated summaries are discovery leads, not publisher-maintained documentation; verify important claims against current first-party sources. Validate any candidate before trusting it; generic search-operator behavior stays in `searxng-search`.
 
 Once you have a real corpus URL, `mcpdoc` exposes it as an MCP documentation server. Prerequisites: `uvx` for mcpdoc and `npx` for mcporter. Bind locally; do not register a persistent gateway server just to browse a corpus. The source list is a candidate, not authority: some commonly cited paths are stale or return HTML, so validate each URL first.
 
