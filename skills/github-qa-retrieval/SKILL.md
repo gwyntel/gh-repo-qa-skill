@@ -1,6 +1,6 @@
 ---
-name: github-qa-retrieval
-description: Use when QA-ing GitHub repos or llms.txt corpora.
+name: github-qa-retrieval-selftest
+description: Use when QA-ing GitHub repos or llms.txt documentation corpora in depth.
 version: 2.1.2
 author: gwyntel
 license: MIT
