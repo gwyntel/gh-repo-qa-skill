@@ -215,6 +215,24 @@ cp -R skills/github-qa-retrieval ~/.claude/skills/
   at byte 0, `name` equals the directory name, and the description leads with a
   trigger phrase.
 
+## Validation (CI)
+
+Every push to `main` and every pull request runs `.github/workflows/validate.yml`:
+
+- `python tools/validate_skills.py` — checks frontmatter parses and carries
+  `name`/`description`/`author`, that `name` matches the skill directory, that the
+  description stays within 60 characters, that code fences and section numbering are
+  intact, and that every backticked `references/…` or `scripts/…` path exists.
+- `shellcheck` on every `skills/*/scripts/*.sh`.
+- a README check that each skill directory is mentioned.
+
+Run the validator locally before pushing:
+
+```bash
+python -m pip install pyyaml
+python tools/validate_skills.py
+```
+
 ## Compatibility
 
 Plain Markdown plus POSIX shell and Node — no agent-specific code in `SKILL.md`.
