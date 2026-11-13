@@ -1,0 +1,4 @@
+# local validator environment
+.venv/
+__pycache__/
+*.pyc

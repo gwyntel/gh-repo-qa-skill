@@ -1,0 +1,65 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skills:
+    name: skill metadata and structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validator dependencies
+        run: python -m pip install --quiet --disable-pip-version-check pyyaml
+
+      - name: Validate skills
+        run: python tools/validate_skills.py
+
+      - name: Shellcheck bundled scripts
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          fi
+          mapfile -t scripts < <(find skills -type f -name '*.sh' -print | sort)
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "no shell scripts to check"
+            exit 0
+          fi
+          shellcheck --version | head -2
+          shellcheck "${scripts[@]}"
+
+      - name: Validate validator itself (self-test)
+        run: python -m compileall -q tools
+
+  readme:
+    name: readme sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: README names every skill
+        run: |
+          status=0
+          for dir in skills/*/; do
+            name=$(basename "$dir")
+            if ! grep -q -- "$name" README.md; then
+              echo "::error file=README.md::README does not mention skill '$name'"
+              status=1
+            fi
+          done
+          exit $status
