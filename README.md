@@ -11,6 +11,9 @@ The skill drives two free MCP documentation servers through
   "how does this work?" questions about a repository.
 - **GitMCP** — `https://gitmcp.io/<owner>/<repo>` — per-repo docs, code search,
   and raw file fetches.
+- **OpenDeepWiki (optional, self-hosted)** — your own wiki/MCP server for
+  private or internal repos, so the documentation tier works where the SaaS
+  servers cannot see. Setup and tool reference: `SKILL.md` §4.11.
 
 You get architecture, API usage, and examples in one call, and fall back to
 manual file reading only when the QA layer is genuinely insufficient.
@@ -37,10 +40,16 @@ that does not exist, instead of loading this skill and doing the retrieval the
 user actually asked for.
 
 The task that imaginary command pretends to perform is the task this skill
-performs. Hence the shim: `scripts/gh-shim.sh` intercepts `gh repo qa …`
-(and `gh repo qar …` and friends), prints a correction banner plus the full
-`SKILL.md` to stderr, and exits `1`. Every other invocation execs straight
-through to the real `gh` binary unchanged.
+performs. Rather than asking every agent to remember a prohibition it cannot
+see the point of, the shim makes the mistake self-correcting:
+`scripts/gh-shim.sh` intercepts `gh repo qa …` (and `gh repo qar …` and
+friends), prints a one-line correction plus the full `SKILL.md` to stderr, and
+exits `1`. Every other invocation execs straight through to the real `gh`
+binary unchanged.
+
+Because the guardrail lives at the shell boundary, the skill itself does not
+have to scold: `SKILL.md` states the fact once, and an agent that trips the shim
+is handed the workflow instead of a lecture.
 
 ## Layout
 
@@ -142,8 +151,19 @@ becomes `hermes_agent`), so run `npx mcporter list --http-url …` once to disco
 the exact names.
 
 Good fits: architecture questions, library usage, finding examples, pre-reading
-context. Bad fits: line-precise bug hunting, uncommitted changes, private repos
-without a PAT.
+context. Bad fits: line-precise bug hunting, uncommitted changes, and private
+repos *unless* you run the documentation tier yourself — see below.
+
+### Private and internal repositories
+
+The two SaaS servers only index public repos, and GitMCP's per-repo endpoint
+does not take credentials. For anything private, self-host the tier:
+[OpenDeepWiki](https://github.com/AIDotNet/OpenDeepWiki) indexes a repo behind
+your firewall and serves the same kind of wiki over MCP, so
+`search_docs` / `read_doc` keep working on internal code. Each indexed repo
+needs clone credentials on its repository row — a fine-grained read-only PAT,
+or a short-lived GitHub App installation token that must be refreshed. Full
+walkthrough, deploy sketch, and the seven tools: `SKILL.md` §4.11.
 
 ## Documentation corpora (`llms.txt`)
 

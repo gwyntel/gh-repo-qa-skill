@@ -46,29 +46,22 @@ if [ "$#" -ge 2 ] && [ "$1" = "repo" ] && [ "$2" = "qa" ]; then
         "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$PWD" "$(printf '%q ' "$@")" >>"$LOG" 2>/dev/null
 
     cat >&2 <<'BANNER'
-================================================================================
-  ✗  `gh repo qa` DOES NOT EXIST. You just invented a command.
-================================================================================
+--------------------------------------------------------------------------------
+  `gh repo qa` is not a gh subcommand — this shim printed the skill for you.
+--------------------------------------------------------------------------------
 
-It did not error before this shim was installed — gh fell through to
-`gh repo --help` and exited 0, which is why it looked like it worked.
-Do NOT retry it with different arguments; no argument spelling makes it real.
+gh falls through to `gh repo --help` for that argument shape and exits 0, which
+is why it looks real. It is not, and no argument spelling changes that. Retrying
+it only trips this shim again.
 
-There is no `gh repo qa`. Repo QA / documentation retrieval is done by the
-github-qa-retrieval skill, which drives free MCP servers (DeepWiki, GitMCP)
-through `mcporter` (via npx). The full skill text follows — read it, then do
-the task the user actually asked for using the commands it specifies.
+Repo QA / documentation retrieval is this skill's job. It drives free MCP
+servers (DeepWiki, GitMCP) through `mcporter` via npx, and can point at a
+self-hosted OpenDeepWiki instance for private repos (§4.11). The full skill text
+follows — read it, then do the task the user actually asked for.
 
   Skill:    github-qa-retrieval
   Path:     resolved relative to this shim
   Load it:  skill_view(name='github-qa-retrieval')
-  Rapid form:
-      npx mcporter call --http-url "https://mcp.deepwiki.com/mcp" \
-        ask_question repoName="owner/repo" question="..." --output json
-      npx mcporter call --http-url "https://gitmcp.io/owner/repo" \
-        fetch_owner_repo_documentation --output json
-
-  (DeepWiki arg is repoName, camelCase — repo_name fails.)
 
 --------------------------------------------------------------------------------
 BANNER
@@ -83,7 +76,7 @@ BANNER
 --------------------------------------------------------------------------------
 
   ↑ That is the whole skill. Now execute the user's original request with
-    mcporter + DeepWiki/GitMCP. Do not call `gh repo qa` again.
+    mcporter + DeepWiki/GitMCP (or your self-hosted OpenDeepWiki).
 
 ================================================================================
 FOOTER
