@@ -1,7 +1,7 @@
 ---
 name: github-qa-retrieval
 description: Use when QA-ing GitHub repos or llms.txt corpora.
-version: 2.1.2
+version: 2.2.0
 author: gwyntel
 license: MIT
 metadata:
@@ -24,7 +24,7 @@ prerequisites:
 
 | # | Rule | Why |
 |---|------|-----|
-| R1 | **Never call `gh repo qa`.** It does not exist. | It exits 0 with `gh repo --help`, so the model believes it worked. |
+| R1 | **`gh repo qa` is not a `gh` subcommand — the PATH shim intercepts it and prints this skill.** | If the banner appears you already have the instructions: go to §3 instead of retrying the command. |
 | R2 | **Raw code searching runs in a blocking subagent** (`delegate_task`), not inline. | 3+ raw searches dump 10k–80k chars into your context and you lose the thread. |
 | R3 | **Never answer a code question from memory when a search is cheap.** | Invented file paths and APIs are the #1 QA failure mode. |
 | R4 | **Every factual claim about code carries `path:line`.** | Unattributed claims are treated as guesses and must be re-verified. |
@@ -33,23 +33,25 @@ prerequisites:
 
 ---
 
-## 1. ⚠️ `gh repo qa` DOES NOT EXIST
+## 1. `gh repo qa` is not a command — the shim says so for you
 
-There is no `gh repo qa` subcommand. There never was. Do not call it. It is a dangerous invented command because **it does not error**: `gh` parses `repo` as the subcommand and treats `qa` as a trailing arg, falling through to `gh repo --help` — which prints ordinary repository help and exits **0**. That false success is why models assume the command works and start inventing arguments (`gh repo qa "owner/repo"`, `gh repo qa --json`, ...) instead of loading this skill.
+`gh repo qa …` is not a `gh` subcommand. `gh` parses `repo` as the subcommand and treats `qa` as
+a trailing argument, so it prints `gh repo --help` and exits **0** — a false success that made
+agents invent arguments for a command that was never real. The work that imaginary command
+promised is the work §3 does.
 
-**The task this command pretends to do is what THIS SKILL does** — repo QA and documentation retrieval, now with a raw code-search layer on top. Go straight to §3.
+The guardrail is already in place: the `gh` shim (`scripts/gh-shim.sh`, §8) catches the call at
+the shell boundary, prints a one-line correction plus this file to stderr, logs it, and exits `1`.
+Every other `gh` invocation passes through to the real binary unchanged.
 
-### Enforcement: the `gh` shim
-
-A PATH shim intercepts the mistake and forces a read of this file:
+**You do not have to police yourself against this command** — if you invoke it, the shim hands
+you the instructions. Mechanics, for reference:
 
 - **Shim:** `scripts/gh-shim.sh`, alongside this file in the installed skill directory
 - **Install:** put a symlink to it earlier on PATH than the real `gh` (see §8)
-- **Intercepts:** `gh repo qa …` → prints a hard-failure banner + the entire SKILL.md to stderr, `exit 1`
+- **Intercepts:** `gh repo qa …` → correction banner + the entire SKILL.md on stderr, `exit 1`
 - **Everything else** execs through to the real `gh` binary unchanged (default `/usr/bin/gh`; override with `GH_SHIM_REAL_GH`)
 - **Log:** `${HERMES_HOME:-$HOME/.hermes}/logs/gh-qa-shim.log` (timestamp, cwd, args)
-
-**If you are reading this because a `gh repo qa` command just failed:** good — that was the shim working. Do not retry the command. Use §3.
 
 ---
 
@@ -59,7 +61,7 @@ A PATH shim intercepts the mistake and forces a read of this file:
 
 | Tier | Layer | Tools | Cost |
 |------|-------|-------|------|
-| **1** | **Documentation search** | `llms.txt` corpus / mcpdoc · DeepWiki `ask_question` · GitMCP `{prefix}_documentation` + `search_{prefix}_documentation` · Mintlify | pre-indexed, no clone, answers "shape" |
+| **1** | **Documentation search** | `llms.txt` corpus / mcpdoc · DeepWiki `ask_question` · GitMCP `{prefix}_documentation` + `search_{prefix}_documentation` · **self-hosted OpenDeepWiki** · Mintlify | pre-indexed, no clone, answers "shape" |
 | **2** | **Code search (indexed)** | GitMCP `search_{prefix}_code` · `gh search code` · GitHub REST `search/code` | pre-indexed, no clone, returns exact paths + snippets |
 | **3** | **Raw code search (last resort)** | `rg` · `git grep` · `ast-grep` · `semgrep` · `ctags` · `git log -S` | local, expensive, runs in a blocking subagent |
 
@@ -323,6 +325,23 @@ no network?      → local tools only; say so explicitly in the answer's confide
 
 **Always state degradations.** "I could not run `ast-grep`, so structural matches were approximated with multiline regex" is a good sentence. Silence is not.
 
+### 3.12 CI state evidence — `gh api …/actions/jobs/<id>/logs`
+
+Use when: a claim depends on "CI is green / the job passed / the refresh ran" — run conclusions
+and step conclusions both lie about *effect*.
+
+```bash
+gh run list --repo O/R --workflow <file> --limit 6 --json databaseId,conclusion,createdAt
+gh api "repos/O/R/actions/runs/<id>/jobs" --jq '.jobs[]|"\(.name) \(.conclusion)", (.steps[]|"  \(.number) \(.name): \(.conclusion)")'
+jid=$(gh api "repos/O/R/actions/runs/<id>/jobs" --jq '.jobs[0].id')
+gh api "repos/O/R/actions/jobs/$jid/logs" > /tmp/ci.log   # then grep '##[error]|Warning|Skipped'
+```
+
+**Gotchas:** `gh run view <id> --log-failed` often prints an empty body even for failed runs — go
+straight to the jobs-logs endpoint. A step reported `success` can still have done nothing (the
+`if [ -z "$(git status --porcelain …)" ]` early-exit pattern), and a later step failing after a
+`git push` leaves real state on a branch with no PR. Cite the log line, not the colour.
+
 ---
 
 ## 4. Tier 1 — documentation retrieval (via `mcporter`, `npx`)
@@ -335,6 +354,7 @@ Use this layer for **shape and intent**: architecture, "how do I use X", migrati
 |--------|--------|------|----------|
 | DeepWiki | `https://mcp.deepwiki.com/mcp` | None | Architecture docs, how-to questions |
 | GitMCP | `https://gitmcp.io/{owner}/{repo}` | None | Per-repo docs, code search, examples |
+| **OpenDeepWiki (self-hosted)** | `http://<your-host>:8080/api/mcp` | None behind a private network | Private/internal repos, your own index — see §4.8 |
 | Mintlify | `https://{subdomain}.mintlify.app/mcp` | None for public docs | Mintlify-hosted docs |
 | GitHub MCP | `https://api.githubcopilot.com/mcp/` | GitHub PAT | File contents, issues, PRs |
 
@@ -500,6 +520,103 @@ npx mcporter config add github \
   --url "https://api.githubcopilot.com/mcp/" \
   --header "Authorization: Bearer $GITHUB_PAT"
 ```
+
+### 4.11 Self-hosted OpenDeepWiki — the OSS DeepWiki/GitMCP equivalent
+
+DeepWiki and GitMCP are SaaS: they only see **public** repos, and every question you ask leaves
+your network. When the repo is private, internal, or you would rather not narrate your
+architecture to a third party, run the same tier yourself.
+[OpenDeepWiki](https://github.com/AIDotNet/OpenDeepWiki) is an open-source wiki generator
+(ASP.NET backend + Next.js UI + SQLite, MIT) that indexes a repository, produces a structured
+wiki with an LLM of your choice, and exposes it over MCP. It is the self-hosted stand-in for both
+`mcp.deepwiki.com` and `gitmcp.io`:
+
+| Capability | DeepWiki / GitMCP | Self-hosted OpenDeepWiki |
+|---|---|---|
+| Public repo docs | yes | yes |
+| **Private / internal repo docs** | no | **yes** (needs clone credentials, below) |
+| Question leaves your network | yes | no |
+| Index you control / can re-generate | no | yes |
+| Cost | free (rate-limited) | your own inference endpoint |
+
+**Deploy** (any Docker host; ~2 GB RAM is enough for small repos):
+
+```yaml
+# docker-compose.yml — backend publishes on a private interface only
+services:
+  odw-backend:
+    image: <registry>/opendeepwiki:latest
+    container_name: odw-backend
+    ports: ["<private-ip>:8080:8080"]
+    env_file: [odw.env]
+  odw-web:
+    image: <registry>/opendeepwiki-web:latest
+    container_name: odw-web
+    ports: ["127.0.0.1:8090:3000"]
+    depends_on: [odw-backend]
+```
+
+`odw.env` keys that matter for QA work — note the **double-underscore** convention, `ENDPOINT`
+is an OpenAI-compatible base URL:
+
+```bash
+# inference
+ENDPOINT=https://<your-openai-compatible-gateway>/v1
+CHAT_API_KEY=<key>
+CHAT_MODEL=<model-id>
+# expose the MCP server
+MCP_ENABLED=true
+# generation knobs (double underscore = config section)
+WikiGenerator__DocumentGenerationTimeoutMinutes=120
+WikiGenerator__ParallelCount=2
+```
+
+**Tools it exposes** (`/api/mcp`, 7 of them):
+
+| Tool | Purpose |
+|---|---|
+| `list_repositories` | what is indexed, with branch/language |
+| `search_repositories` | route a question to the right repo |
+| `search_docs` | search the generated wiki — **pass `language: "en"`**; the default is `zh` and returns silent zero hits on an English index |
+| `read_doc` | full text of one wiki document |
+| `get_repo_structure` | directory tree of the indexed repo |
+| `search_doc` | search within one repository's docs |
+| `read_file` | read a source file from the indexed repo |
+
+**Query it with mcporter** (same shape as the SaaS servers):
+
+```bash
+# discover first — the prefix comes from the server, not from you
+npx mcporter list --http-url "http://<your-host>:8080/api/mcp"
+
+npx mcporter call --http-url "http://<your-host>:8080/api/mcp" \
+  search_docs query="hook registration" owner="owner" repo="repo" language="en" --output json
+```
+
+**Or register it as a native MCP server** so your agent gets the tools directly instead of
+shelling out (Hermes example — the server name becomes the tool prefix):
+
+```bash
+hermes config set mcp_servers.opendeepwiki.url "http://<your-host>:8080/api/mcp"
+hermes mcp test opendeepwiki     # expect "Connected" + "Tools discovered: 7"
+# → mcp_opendeepwiki_search_docs, mcp_opendeepwiki_read_doc, mcp_opendeepwiki_list_repositories, …
+```
+
+**Private repos — the sharp edge.** Importing a GitHub repo through the app's own UI/API works for
+public repos immediately. A private clone needs credentials on the *repository row*: the clone
+path uses username/password credentials only, so an API token that browses repos is not enough.
+Two working shapes:
+
+- a fine-grained PAT with `Contents: Read-only` on just those repos, stored as the repo's
+  `authAccount`/`authPassword`; or
+- a GitHub App installation token (`x-access-token` as the username), which expires after
+  **1 hour** and must be re-minted and re-written to the row before a regenerate — a cron job or
+  a pre-flight script, not a one-off.
+
+Either way the credential ends up in the SQLite DB and in every backup of it: scope the token
+tightly and treat that file as a secret. Also note that whatever the MCP endpoint can read, the
+agent talking to it can read — publish the port on a private network (VPN/tailnet), never the
+internet.
 
 ---
 
